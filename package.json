@@ -1,0 +1,13 @@
+{
+  "name": "my-nodered-backend",
+  "version": "1.0.0",
+  "description": "Node-RED backend for Vitals Monitoring",
+  "main": "index.js",
+  "scripts": {
+    "start": "node node_modules/node-red/red.js --userDir . settings.js"
+  },
+  "dependencies": {
+    "node-red": "^3.1.0",
+    "node-red-node-email": "^3.0.1"
+  }
+}
