@@ -1,0 +1,135 @@
+[
+    {
+        "id": "sheet_vitals",
+        "type": "tab",
+        "label": "Vitals Monitoring Flow",
+        "disabled": false,
+        "info": ""
+    },
+    {
+        "id": "node_http_in",
+        "type": "http in",
+        "z": "sheet_vitals",
+        "name": "ESP32 Telemetry Receiver",
+        "url": "/api/telemetry",
+        "method": "post",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 160,
+        "y": 120,
+        "wires": [
+            [
+                "node_stash_data"
+            ]
+        ]
+    },
+    {
+        "id": "node_http_response",
+        "type": "http response",
+        "z": "sheet_vitals",
+        "name": "Respond OK",
+        "statusCode": "200",
+        "headers": {},
+        "x": 400,
+        "y": 80,
+        "wires": []
+    },
+    {
+        "id": "node_stash_data",
+        "type": "function",
+        "z": "sheet_vitals",
+        "name": "Stash Sensor Data & Fetch History",
+        "func": "const { MongoClient } = global.get('mongodb') || require('mongodb');\nconst uri = process.env.MONGODB_URI;\n\nif (!uri) {\n    node.error('MONGODB_URI is missing from environment variables');\n    return null;\n}\n\n(async () => {\n    const client = new MongoClient(uri);\n    try {\n        await client.connect();\n        const db = client.db('Vitals_Monitoring');\n        \n        // 1. Save incoming reading from ESP32\n        const incoming = msg.payload;\n        const newDoc = {\n            deviceId: incoming.deviceId || 'ESP32_01',\n            bpm: Number(incoming.bpm),\n            spo2: Number(incoming.spo2),\n            bodyTemp: Number(incoming.bodyTemp),\n            timestamp: new Date().toISOString()\n        };\n        await db.collection('telemetry').insertOne(newDoc);\n        \n        // 2. Fetch trailing 6 readings for Groq Context timeline\n        const history = await db.collection('telemetry')\n            .find({ deviceId: newDoc.deviceId })\n            .sort({ timestamp: -1 })\n            .limit(6)\n            .toArray();\n            \n        // 3. Fetch custom upper/lower targets\n        const config = await db.collection('device_configs')\n            .findOne({ deviceId: newDoc.deviceId }) || {\n                minBPM: 60, maxBPM: 100,\n                minSpO2: 95, maxSpO2: 100,\n                minTemp: 36.0, maxTemp: 37.5\n            };\n            \n        msg.payload = {\n            current: newDoc,\n            history: history.reverse(),\n            config: config\n        };\n        \n        node.send(msg);\n    } catch (err) {\n        node.error(err);\n    } finally {\n        await client.close();\n    }\n})();\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 210,
+        "y": 220,
+        "wires": [
+            [
+                "node_http_response",
+                "node_prep_groq"
+            ]
+        ]
+    },
+    {
+        "id": "node_prep_groq",
+        "type": "function",
+        "z": "sheet_vitals",
+        "name": "Prep Groq Prompt Payload",
+        "func": "const groqKey = process.env.GROQ_API_KEY;\nif (!groqKey) {\n    node.error('GROQ_API_KEY environment variable missing');\n    return null;\n}\n\nconst historyText = msg.payload.history.map(h => \n    `Time: ${h.timestamp}, Pulse: ${h.bpm}BPM, SpO2: ${h.spo2}%, Temp: ${h.bodyTemp}°C`\n).join('\\n');\n\nmsg.headers = {\n    'Authorization': 'Bearer ' + groqKey,\n    'Content-Type': 'application/json'\n};\n\nmsg.payload = {\n    model: 'llama3-8b-8192',\n    messages: [\n        {\n            role: 'system',\n            content: 'You are an advanced medical telemetry monitor analyst AI. Analyze the timestamp sequence trend. Output a single, short summary sentence predicting if the user\\'s vitals are stabilizing, degrading, or displaying abnormal volatility patterns.'\n        },\n        {\n            role: 'user',\n            content: `Analyze this trailing stream timeline data:\\n${historyText}`\n        }\n    ]\n};\n\n// Keep old data configuration values saved in an alternate object tracker container\nmsg.vitalsContext = msg.payload.history;\nmsg.configContext = msg.payload.config;\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 510,
+        "y": 220,
+        "wires": [
+            [
+                "node_groq_api_request"
+            ]
+        ]
+    },
+    {
+        "id": "node_groq_api_request",
+        "type": "http request",
+        "z": "sheet_vitals",
+        "name": "Call Groq Cloud Engine",
+        "method": "POST",
+        "ret": "obj",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": {},
+        "x": 210,
+        "y": 320,
+        "wires": [
+            [
+                "node_evaluate_thresholds"
+            ]
+        ]
+    },
+    {
+        "id": "node_evaluate_thresholds",
+        "type": "function",
+        "z": "sheet_vitals",
+        "name": "Evaluate Dual Thresholds",
+        "func": "const { MongoClient } = global.get('mongodb') || require('mongodb');\nconst uri = process.env.MONGODB_URI;\n\nconst aiAnalysisText = msg.payload?.choices?.[0]?.message?.content || 'Analysis unavailable';\nconst history = msg.vitalsContext;\nconst lastReading = history[history.length - 1];\nconst cfg = msg.configContext;\n\n// Append the AI prediction right into our latest reading record item context structure\n(async () => {\n    const client = new MongoClient(uri);\n    try {\n        await client.connect();\n        const db = client.db('Vitals_Monitoring');\n        await db.collection('telemetry').updateOne(\n            { _id: lastReading._id },\n            { $set: { aiAnalysis: aiAnalysisText } }\n        );\n    } catch(e) { \n        node.error('Failed appending AI data string', e);\n    } finally {\n        await client.close();\n    }\n})();\n\n// 2. Evaluate dual system margins limits\nlet alerts = [];\nif (lastReading.bpm < cfg.minBPM) alerts.push(`Low Pulse: ${lastReading.bpm} BPM (Min target: ${cfg.minBPM})`);\nif (lastReading.bpm > cfg.maxBPM) alerts.push(`High Pulse: ${lastReading.bpm} BPM (Max target: ${cfg.maxBPM})`);\n\nif (lastReading.spo2 < cfg.minSpO2) alerts.push(`Critical Oxygen drop: ${lastReading.spo2}% (Min safety: ${cfg.minSpO2}%)`);\nif (lastReading.spo2 > cfg.maxSpO2) alerts.push(`Oxygen value surge: ${lastReading.spo2}% (Max limit: ${cfg.maxSpO2}%)`);\n\nif (lastReading.bodyTemp < cfg.minTemp) alerts.push(`Low Body Temp: ${lastReading.bodyTemp}°C (Min target: ${cfg.minTemp}°C)`);\nif (lastReading.bodyTemp > cfg.maxTemp) alerts.push(`Fever Warning: ${lastReading.bodyTemp}°C (Max safety: ${cfg.maxTemp}°C)`);\n\nif (alerts.length > 0) {\n    msg.to = \"your-alert-inbox@gmail.com\"; \n    msg.topic = \"⚠️ EMERGENCY HEALTH ALERT: \" + lastReading.deviceId;\n    msg.payload = `Emergency health metrics breach detected for device: ${lastReading.deviceId}.\\n\\nFlags Raised:\\n- ${alerts.join('\\n- ')}\\n\\nAI Trend Insight Analysis:\\n${aiAnalysisText}\\n\\nLive Metrics Context Tracker Stream:\\nPulse: ${lastReading.bpm} BPM | SpO2: ${lastReading.spo2}% | Temp: ${lastReading.bodyTemp}°C`;\n    return msg;\n}\n\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 510,
+        "y": 320,
+        "wires": [
+            [
+                "node_email_out"
+            ]
+        ]
+    },
+    {
+        "id": "node_email_out",
+        "type": "e-mail out",
+        "z": "sheet_vitals",
+        "server": "smtp.gmail.com",
+        "port": "465",
+        "secure": true,
+        "tls": "",
+        "name": "Dispatch Gmail Alert",
+        "dname": "Dispatch Gmail Alert",
+        "x": 520,
+        "y": 420,
+        "wires": []
+    }
+]
