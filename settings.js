@@ -4,7 +4,12 @@ module.exports = {
     serialReconnectTime: 15000,
     debugMaxLength: 1000,
     flowFile: 'flows.json',
-    functionGlobalContext: {},
+    
+    // ALLOW FUNCTION NODES TO USE THE MONGODB DRIVER NATIVELY
+    functionGlobalContext: {
+        mongodb: require('mongodb')
+    },
+    
     exportGlobalContextKeys: false,
     logging: {
         console: {
