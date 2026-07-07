@@ -1,87 +1,143 @@
 [
     {
-        "id": "sheet_vitals",
+        "id": "b03e2598e891571e",
         "type": "tab",
-        "label": "Vitals Monitoring Flow",
-        "disabled": false,
-        "info": ""
+        "label": "Vitals Monitoring Flow"
     },
     {
-        "id": "node_http_in",
+        "id": "83c3386ce91d6f65",
         "type": "http in",
-        "z": "sheet_vitals",
+        "z": "b03e2598e891571e",
         "name": "ESP32 Telemetry Receiver",
         "url": "/api/telemetry",
         "method": "post",
         "upload": false,
         "swaggerDoc": "",
-        "x": 160,
-        "y": 120,
+        "x": 210,
+        "y": 160,
         "wires": [
             [
-                "node_stash_data"
+                "f98a833a490bb165",
+                "8a2f8c8132e61b86"
             ]
         ]
     },
     {
-        "id": "node_http_response",
+        "id": "f98a833a490bb165",
         "type": "http response",
-        "z": "sheet_vitals",
+        "z": "b03e2598e891571e",
         "name": "Respond OK",
         "statusCode": "200",
-        "headers": {},
-        "x": 400,
-        "y": 80,
+        "x": 450,
+        "y": 100,
         "wires": []
     },
     {
-        "id": "node_stash_data",
+        "id": "8a2f8c8132e61b86",
         "type": "function",
-        "z": "sheet_vitals",
-        "name": "Stash Sensor Data & Fetch History",
-        "func": "const { MongoClient } = global.get('mongodb') || require('mongodb');\nconst uri = process.env.MONGODB_URI;\n\nif (!uri) {\n    node.error('MONGODB_URI is missing from environment variables');\n    return null;\n}\n\n(async () => {\n    const client = new MongoClient(uri);\n    try {\n        await client.connect();\n        const db = client.db('Vitals_Monitoring');\n        \n        // 1. Save incoming reading from ESP32\n        const incoming = msg.payload;\n        const newDoc = {\n            deviceId: incoming.deviceId || 'ESP32_01',\n            bpm: Number(incoming.bpm),\n            spo2: Number(incoming.spo2),\n            bodyTemp: Number(incoming.bodyTemp),\n            timestamp: new Date().toISOString()\n        };\n        await db.collection('telemetry').insertOne(newDoc);\n        \n        // 2. Fetch trailing 6 readings for Groq Context timeline\n        const history = await db.collection('telemetry')\n            .find({ deviceId: newDoc.deviceId })\n            .sort({ timestamp: -1 })\n            .limit(6)\n            .toArray();\n            \n        // 3. Fetch custom upper/lower targets\n        const config = await db.collection('device_configs')\n            .findOne({ deviceId: newDoc.deviceId }) || {\n                minBPM: 60, maxBPM: 100,\n                minSpO2: 95, maxSpO2: 100,\n                minTemp: 36.0, maxTemp: 37.5\n            };\n            \n        msg.payload = {\n            current: newDoc,\n            history: history.reverse(),\n            config: config\n        };\n        \n        node.send(msg);\n    } catch (err) {\n        node.error(err);\n    } finally {\n        await client.close();\n    }\n})();\nreturn null;",
+        "z": "b03e2598e891571e",
+        "name": "Format Sensor Document",
+        "func": "const incoming = msg.payload;\nmsg.payload = {\n    deviceId: incoming.deviceId || 'ESP32_01',\n    bpm: Number(incoming.bpm),\n    spo2: Number(incoming.spo2),\n    bodyTemp: Number(incoming.bodyTemp),\n    timestamp: new Date().toISOString()\n};\nreturn msg;",
         "outputs": 1,
-        "timeout": 0,
+        "timeout": "",
         "noerr": 0,
         "initialize": "",
         "finalize": "",
         "libs": [],
-        "x": 210,
-        "y": 220,
+        "x": 490,
+        "y": 180,
         "wires": [
             [
-                "node_http_response",
-                "node_prep_groq"
+                "4dc65908a9d841c9"
             ]
         ]
     },
     {
-        "id": "node_prep_groq",
+        "id": "4dc65908a9d841c9",
+        "type": "mongodb4",
+        "z": "b03e2598e891571e",
+        "clientNode": "fe58054484051629",
+        "collection": "telemetry",
+        "operation": "insertOne",
+        "output": "toArray",
+        "maxTimeMS": "",
+        "handleDocId": false,
+        "name": "Atlas Insert Data",
+        "x": 750,
+        "y": 180,
+        "wires": [
+            [
+                "e741d3fb90d2958c"
+            ]
+        ]
+    },
+    {
+        "id": "e741d3fb90d2958c",
         "type": "function",
-        "z": "sheet_vitals",
+        "z": "b03e2598e891571e",
+        "name": "Prep Config Lookup Query",
+        "func": "const savedTelemetry = msg.payload;\n// Preserve the newly created document details for later steps\nmsg.vitalsContext = savedTelemetry;\n\n// Setup query payload matching the incoming device configuration targets\nmsg.payload = { deviceId: savedTelemetry.deviceId || 'ESP32_01' };\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 280,
+        "y": 280,
+        "wires": [
+            [
+                "da0dcbfe966a5d55"
+            ]
+        ]
+    },
+    {
+        "id": "da0dcbfe966a5d55",
+        "type": "mongodb4",
+        "z": "b03e2598e891571e",
+        "clientNode": "fe58054484051629",
+        "collection": "device_configs",
+        "operation": "findOne",
+        "output": "toArray",
+        "maxTimeMS": "",
+        "handleDocId": false,
+        "name": "Atlas Fetch Device Config",
+        "x": 590,
+        "y": 280,
+        "wires": [
+            [
+                "658e573fadfca007"
+            ]
+        ]
+    },
+    {
+        "id": "658e573fadfca007",
+        "type": "function",
+        "z": "b03e2598e891571e",
         "name": "Prep Groq Prompt Payload",
-        "func": "const groqKey = process.env.GROQ_API_KEY;\nif (!groqKey) {\n    node.error('GROQ_API_KEY environment variable missing');\n    return null;\n}\n\nconst historyText = msg.payload.history.map(h => \n    `Time: ${h.timestamp}, Pulse: ${h.bpm}BPM, SpO2: ${h.spo2}%, Temp: ${h.bodyTemp}°C`\n).join('\\n');\n\nmsg.headers = {\n    'Authorization': 'Bearer ' + groqKey,\n    'Content-Type': 'application/json'\n};\n\nmsg.payload = {\n    model: 'llama3-8b-8192',\n    messages: [\n        {\n            role: 'system',\n            content: 'You are an advanced medical telemetry monitor analyst AI. Analyze the timestamp sequence trend. Output a single, short summary sentence predicting if the user\\'s vitals are stabilizing, degrading, or displaying abnormal volatility patterns.'\n        },\n        {\n            role: 'user',\n            content: `Analyze this trailing stream timeline data:\\n${historyText}`\n        }\n    ]\n};\n\n// Keep old data configuration values saved in an alternate object tracker container\nmsg.vitalsContext = msg.payload.history;\nmsg.configContext = msg.payload.config;\n\nreturn msg;",
+        "func": "const groqKey = process.env.GROQ_API_KEY;\nconst currentVitals = msg.vitalsContext;\n\n// Capture fallback defaults if a specific config layout sheet isn't assigned yet inside Atlas\nconst cfg = msg.payload || {\n    minBPM: 60, maxBPM: 100, minSpO2: 95, maxSpO2: 100, minTemp: 36.0, maxTemp: 37.5\n};\nmsg.configContext = cfg;\n\nmsg.headers = { \n    'Authorization': 'Bearer ' + groqKey, \n    'Content-Type': 'application/json' \n};\n\nmsg.payload = {\n    model: 'llama-3.1-8b-instant',\n    messages: [\n        { \n            role: 'system', \n            content: 'You are an advanced medical telemetry monitor analyst AI. You must evaluate current data against the provided target threshold ranges. You MUST respond exactly in this structural format with no extra conversational text:\\nStatus: [Normal OR Warning <parameter 1 is increasing..> OR Alert <parameter 1 has crossed threshold>]\\nRemark: [Your observation, e.g., Signs of body temp increasing. Increased from [X] to [Y] and is increasing now.]'\n        },\n        {\n            role: 'user',\n            content: `Evaluate this medical context:\\n\\nCURRENT TELEMETRY RECORD:\\n- Pulse Rate: ${currentVitals.bpm} BPM\\n- Blood Oxygen (SpO2): ${currentVitals.spo2}%\\n- Body Temperature: ${currentVitals.bodyTemp}°C\\n\\nTARGET DATABASE SAFE RANGE THRESHOLDS:\\n- Pulse Limits: ${cfg.minBPM} to ${cfg.maxBPM} BPM\\n- Oxygen Target: Above ${cfg.minSpO2}%\\n- Temperature Limits: ${cfg.minTemp} to ${cfg.maxTemp}°C` \n        }\n    ]\n};\n\nreturn msg;",
         "outputs": 1,
-        "timeout": 0,
+        "timeout": "",
         "noerr": 0,
         "initialize": "",
         "finalize": "",
         "libs": [],
-        "x": 510,
-        "y": 220,
+        "x": 860,
+        "y": 280,
         "wires": [
             [
-                "node_groq_api_request"
+                "dd39e0750dd508ed"
             ]
         ]
     },
     {
-        "id": "node_groq_api_request",
+        "id": "dd39e0750dd508ed",
         "type": "http request",
-        "z": "sheet_vitals",
+        "z": "b03e2598e891571e",
         "name": "Call Groq Cloud Engine",
         "method": "POST",
         "ret": "obj",
+        "paytoqs": "ignore",
         "url": "https://api.groq.com/openai/v1/chat/completions",
         "tls": "",
         "persist": false,
@@ -89,47 +145,73 @@
         "insecureHTTPParser": false,
         "authType": "",
         "senderr": false,
-        "headers": {},
-        "x": 210,
-        "y": 320,
+        "headers": [],
+        "x": 710,
+        "y": 400,
         "wires": [
             [
-                "node_evaluate_thresholds"
+                "bb455c08b433d7dd"
             ]
         ]
     },
     {
-        "id": "node_evaluate_thresholds",
+        "id": "bb455c08b433d7dd",
         "type": "function",
-        "z": "sheet_vitals",
+        "z": "b03e2598e891571e",
         "name": "Evaluate Dual Thresholds",
-        "func": "const { MongoClient } = global.get('mongodb') || require('mongodb');\nconst uri = process.env.MONGODB_URI;\n\nconst aiAnalysisText = msg.payload?.choices?.[0]?.message?.content || 'Analysis unavailable';\nconst history = msg.vitalsContext;\nconst lastReading = history[history.length - 1];\nconst cfg = msg.configContext;\n\n// Append the AI prediction right into our latest reading record item context structure\n(async () => {\n    const client = new MongoClient(uri);\n    try {\n        await client.connect();\n        const db = client.db('Vitals_Monitoring');\n        await db.collection('telemetry').updateOne(\n            { _id: lastReading._id },\n            { $set: { aiAnalysis: aiAnalysisText } }\n        );\n    } catch(e) { \n        node.error('Failed appending AI data string', e);\n    } finally {\n        await client.close();\n    }\n})();\n\n// 2. Evaluate dual system margins limits\nlet alerts = [];\nif (lastReading.bpm < cfg.minBPM) alerts.push(`Low Pulse: ${lastReading.bpm} BPM (Min target: ${cfg.minBPM})`);\nif (lastReading.bpm > cfg.maxBPM) alerts.push(`High Pulse: ${lastReading.bpm} BPM (Max target: ${cfg.maxBPM})`);\n\nif (lastReading.spo2 < cfg.minSpO2) alerts.push(`Critical Oxygen drop: ${lastReading.spo2}% (Min safety: ${cfg.minSpO2}%)`);\nif (lastReading.spo2 > cfg.maxSpO2) alerts.push(`Oxygen value surge: ${lastReading.spo2}% (Max limit: ${cfg.maxSpO2}%)`);\n\nif (lastReading.bodyTemp < cfg.minTemp) alerts.push(`Low Body Temp: ${lastReading.bodyTemp}°C (Min target: ${cfg.minTemp}°C)`);\nif (lastReading.bodyTemp > cfg.maxTemp) alerts.push(`Fever Warning: ${lastReading.bodyTemp}°C (Max safety: ${cfg.maxTemp}°C)`);\n\nif (alerts.length > 0) {\n    msg.to = \"your-alert-inbox@gmail.com\"; \n    msg.topic = \"⚠️ EMERGENCY HEALTH ALERT: \" + lastReading.deviceId;\n    msg.payload = `Emergency health metrics breach detected for device: ${lastReading.deviceId}.\\n\\nFlags Raised:\\n- ${alerts.join('\\n- ')}\\n\\nAI Trend Insight Analysis:\\n${aiAnalysisText}\\n\\nLive Metrics Context Tracker Stream:\\nPulse: ${lastReading.bpm} BPM | SpO2: ${lastReading.spo2}% | Temp: ${lastReading.bodyTemp}°C`;\n    return msg;\n}\n\nreturn null;",
+        "func": "const aiAnalysisText = msg.payload?.choices?.[0]?.message?.content || 'Status: Warning\\nRemark: AI Analysis engine parsing failure.';\nconst lastReading = msg.vitalsContext;\nconst cfg = msg.configContext;\n\nlet alerts = [];\nif (lastReading.bpm < cfg.minBPM || lastReading.bpm > cfg.maxBPM) alerts.push(`Pulse Breach: ${lastReading.bpm} BPM`);\nif (lastReading.spo2 < cfg.minSpO2) alerts.push(`Hypoxia Breach: ${lastReading.spo2}%`);\nif (lastReading.bodyTemp < cfg.minTemp || lastReading.bodyTemp > cfg.maxTemp) alerts.push(`Temp Breach: ${lastReading.bodyTemp}°C`);\n\n// If AI generated a critical status or the math check flags a breach, trigger emergency alert routing\nif (alerts.length > 0 || aiAnalysisText.includes('Alert') || aiAnalysisText.includes('Warning')) {\n    msg.to = \"your-alert-inbox@gmail.com\";\n    msg.topic = \"⚠️ HEALTH ALERT SYSTÈM: \" + lastReading.deviceId;\n    msg.payload = `AI Clinical Assessment:\\n${aiAnalysisText}\\n\\nRaw Mathematical Breaches Found:\\n${alerts.length > 0 ? alerts.join('\\n') : 'None parsed by strict bounds.'}`;\n    return msg;\n}\n\nreturn null;",
         "outputs": 1,
-        "timeout": 0,
+        "timeout": "",
         "noerr": 0,
         "initialize": "",
         "finalize": "",
         "libs": [],
-        "x": 510,
-        "y": 320,
+        "x": 1030,
+        "y": 400,
         "wires": [
             [
-                "node_email_out"
+                "24de512770312c41",
+                "33d10bc2675760b6"
             ]
         ]
     },
     {
-        "id": "node_email_out",
-        "type": "e-mail out",
-        "z": "sheet_vitals",
+        "id": "33d10bc2675760b6",
+        "type": "e-mail",
+        "z": "b03e2598e891571e",
         "server": "smtp.gmail.com",
         "port": "465",
+        "authtype": "BASIC",
+        "saslformat": true,
+        "token": "oauth2Response.access_token",
         "secure": true,
-        "tls": "",
-        "name": "Dispatch Gmail Alert",
-        "dname": "Dispatch Gmail Alert",
-        "x": 520,
-        "y": 420,
+        "tls": true,
+        "name": "kulkarnikushal26@gmail.com",
+        "dname": "E-Mail Alerts",
+        "x": 1270,
+        "y": 460,
         "wires": []
+    },
+    {
+        "id": "fe58054484051629",
+        "type": "mongodb4-client",
+        "name": "AtlasCluster",
+        "hostname": "",
+        "port": "",
+        "dbName": "Vitals_Monitoring",
+        "appName": "",
+        "authSource": "",
+        "tls": false,
+        "tlsCAFile": "",
+        "tlsCertificateKeyFile": "",
+        "tlsInsecure": false,
+        "connectTimeoutMS": "",
+        "socketTimeoutMS": "",
+        "minPoolSize": "",
+        "maxPoolSize": "",
+        "maxIdleTimeMS": "",
+        "uri": "mongodb+srv://kushaltronics_db_user:DB4me!@c1.b0ijtky.mongodb.net/?appName=C1",
+        "advanced": "{}",
+        "uriTabActive": "tab-uri-advanced"
     }
 ]
