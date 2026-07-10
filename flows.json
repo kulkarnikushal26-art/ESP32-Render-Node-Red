@@ -1,41 +1,39 @@
 [
     {
-        "id": "b03e2598e891571e",
+        "id": "9199c418724cdcb2",
         "type": "tab",
         "label": "Vitals Monitoring Flow"
     },
     {
-        "id": "83c3386ce91d6f65",
+        "id": "f9049913a6376666",
         "type": "http in",
-        "z": "b03e2598e891571e",
+        "z": "9199c418724cdcb2",
         "name": "ESP32 Telemetry Receiver",
         "url": "/api/telemetry",
         "method": "post",
-        "upload": false,
-        "swaggerDoc": "",
-        "x": 210,
-        "y": 160,
+        "x": 130,
+        "y": 60,
         "wires": [
             [
-                "f98a833a490bb165",
-                "8a2f8c8132e61b86"
+                "688a4766d77515b8",
+                "32243021983322bc"
             ]
         ]
     },
     {
-        "id": "f98a833a490bb165",
+        "id": "688a4766d77515b8",
         "type": "http response",
-        "z": "b03e2598e891571e",
+        "z": "9199c418724cdcb2",
         "name": "Respond OK",
         "statusCode": "200",
-        "x": 450,
-        "y": 100,
+        "x": 350,
+        "y": 20,
         "wires": []
     },
     {
-        "id": "8a2f8c8132e61b86",
+        "id": "32243021983322bc",
         "type": "function",
-        "z": "b03e2598e891571e",
+        "z": "9199c418724cdcb2",
         "name": "Format Sensor Document",
         "func": "const incoming = msg.payload;\nmsg.payload = {\n    deviceId: incoming.deviceId || 'ESP32_01',\n    bpm: Number(incoming.bpm),\n    spo2: Number(incoming.spo2),\n    bodyTemp: Number(incoming.bodyTemp),\n    timestamp: new Date().toISOString()\n};\nreturn msg;",
         "outputs": 1,
@@ -44,141 +42,211 @@
         "initialize": "",
         "finalize": "",
         "libs": [],
-        "x": 490,
-        "y": 180,
+        "x": 390,
+        "y": 100,
         "wires": [
             [
-                "4dc65908a9d841c9"
+                "fa2f9b03cbf631d4"
             ]
         ]
     },
     {
-        "id": "4dc65908a9d841c9",
+        "id": "fa2f9b03cbf631d4",
         "type": "mongodb4",
-        "z": "b03e2598e891571e",
-        "clientNode": "fe58054484051629",
+        "z": "9199c418724cdcb2",
+        "clientNode": "mongo_cluster_config",
         "collection": "telemetry",
         "operation": "insertOne",
         "output": "toArray",
         "maxTimeMS": "",
         "handleDocId": false,
         "name": "Atlas Insert Data",
-        "x": 750,
-        "y": 180,
+        "x": 650,
+        "y": 100,
         "wires": [
             [
-                "e741d3fb90d2958c"
+                "e8d5f488c1188e3b"
             ]
         ]
     },
     {
-        "id": "e741d3fb90d2958c",
+        "id": "e8d5f488c1188e3b",
         "type": "function",
-        "z": "b03e2598e891571e",
+        "z": "9199c418724cdcb2",
         "name": "Prep Config Lookup Query",
-        "func": "const savedTelemetry = msg.payload;\n// Preserve the newly created document details for later steps\nmsg.vitalsContext = savedTelemetry;\n\n// Setup query payload matching the incoming device configuration targets\nmsg.payload = { deviceId: savedTelemetry.deviceId || 'ESP32_01' };\nreturn msg;",
+        "func": "msg.vitalsContext = msg.payload;\nmsg.payload = { deviceId: msg.vitalsContext.deviceId || 'ESP32_01' };\nreturn msg;",
         "outputs": 1,
         "timeout": "",
         "noerr": 0,
         "initialize": "",
         "finalize": "",
         "libs": [],
-        "x": 280,
-        "y": 280,
+        "x": 920,
+        "y": 100,
         "wires": [
             [
-                "da0dcbfe966a5d55"
+                "7dd5ea7eb390f248"
             ]
         ]
     },
     {
-        "id": "da0dcbfe966a5d55",
+        "id": "7dd5ea7eb390f248",
         "type": "mongodb4",
-        "z": "b03e2598e891571e",
-        "clientNode": "fe58054484051629",
+        "z": "9199c418724cdcb2",
+        "clientNode": "mongo_cluster_config",
         "collection": "device_configs",
         "operation": "findOne",
         "output": "toArray",
         "maxTimeMS": "",
         "handleDocId": false,
         "name": "Atlas Fetch Device Config",
-        "x": 590,
-        "y": 280,
+        "x": 190,
+        "y": 180,
         "wires": [
             [
-                "658e573fadfca007"
+                "48e0e7f12b136433"
             ]
         ]
     },
     {
-        "id": "658e573fadfca007",
+        "id": "48e0e7f12b136433",
         "type": "function",
-        "z": "b03e2598e891571e",
-        "name": "Prep Groq Prompt Payload",
-        "func": "const groqKey = process.env.GROQ_API_KEY;\nconst currentVitals = msg.vitalsContext;\n\n// Capture fallback defaults if a specific config layout sheet isn't assigned yet inside Atlas\nconst cfg = msg.payload || {\n    minBPM: 60, maxBPM: 100, minSpO2: 95, maxSpO2: 100, minTemp: 36.0, maxTemp: 37.5\n};\nmsg.configContext = cfg;\n\nmsg.headers = { \n    'Authorization': 'Bearer ' + groqKey, \n    'Content-Type': 'application/json' \n};\n\nmsg.payload = {\n    model: 'llama-3.1-8b-instant',\n    messages: [\n        { \n            role: 'system', \n            content: 'You are an advanced medical telemetry monitor analyst AI. You must evaluate current data against the provided target threshold ranges. You MUST respond exactly in this structural format with no extra conversational text:\\nStatus: [Normal OR Warning <parameter 1 is increasing..> OR Alert <parameter 1 has crossed threshold>]\\nRemark: [Your observation, e.g., Signs of body temp increasing. Increased from [X] to [Y] and is increasing now.]'\n        },\n        {\n            role: 'user',\n            content: `Evaluate this medical context:\\n\\nCURRENT TELEMETRY RECORD:\\n- Pulse Rate: ${currentVitals.bpm} BPM\\n- Blood Oxygen (SpO2): ${currentVitals.spo2}%\\n- Body Temperature: ${currentVitals.bodyTemp}°C\\n\\nTARGET DATABASE SAFE RANGE THRESHOLDS:\\n- Pulse Limits: ${cfg.minBPM} to ${cfg.maxBPM} BPM\\n- Oxygen Target: Above ${cfg.minSpO2}%\\n- Temperature Limits: ${cfg.minTemp} to ${cfg.maxTemp}°C` \n        }\n    ]\n};\n\nreturn msg;",
+        "z": "9199c418724cdcb2",
+        "name": "Prep History Aggregation",
+        "func": "msg.configContext = msg.payload || {\n    minBPM: 60, maxBPM: 100, minSpO2: 95, maxSpO2: 100, minTemp: 36.0, maxTemp: 37.5\n};\n\n// Build query to fetch the last 10 historical entries sorted sequentially\nmsg.payload = [\n    { $match: { deviceId: msg.vitalsContext.deviceId } },\n    { $sort: { timestamp: -1 } },\n    { $limit: 10 },\n    { $sort: { timestamp: 1 } }\n];\nreturn msg;",
         "outputs": 1,
         "timeout": "",
         "noerr": 0,
         "initialize": "",
         "finalize": "",
         "libs": [],
-        "x": 860,
-        "y": 280,
+        "x": 470,
+        "y": 180,
         "wires": [
             [
-                "dd39e0750dd508ed"
+                "7bd7fc387ac11a5b"
             ]
         ]
     },
     {
-        "id": "dd39e0750dd508ed",
+        "id": "7bd7fc387ac11a5b",
+        "type": "mongodb4",
+        "z": "9199c418724cdcb2",
+        "clientNode": "mongo_cluster_config",
+        "collection": "telemetry",
+        "operation": "aggregate",
+        "output": "toArray",
+        "maxTimeMS": "",
+        "handleDocId": false,
+        "name": "Atlas Fetch Last 10 Readings",
+        "x": 780,
+        "y": 180,
+        "wires": [
+            [
+                "0e56ce3115206e23"
+            ]
+        ]
+    },
+    {
+        "id": "0e56ce3115206e23",
+        "type": "function",
+        "z": "9199c418724cdcb2",
+        "name": "Prep Groq Prompt Payload",
+        "func": "const groqKey = env.get(\"GROQ_API_KEY\");\nconst history = msg.payload || [];\nconst cfg = msg.configContext;\nconst current = msg.vitalsContext;\n\n// Format history stack cleanly for trend parsing\nconst historyString = history.map(h => `[Time: ${h.timestamp}, Pulse: ${h.bpm}BPM, SpO2: ${h.spo2}%, Temp: ${h.bodyTemp}°C]`).join('\\n');\n\nmsg.headers = { \n    'Authorization': 'Bearer ' + groqKey, \n    'Content-Type': 'application/json' \n};\n\nmsg.payload = {\n    model: 'llama-3.1-8b-instant',\n    messages: [\n        { \n            role: 'system', \n            content: 'You are an advanced medical telemetry monitor analyst AI. You must evaluate the trailing timeline trend context of 10 readings against the dynamic thresholds configuration limits provided.\\n\\nCRITICAL OUTPUT REQUIREMENT: You MUST respond exactly in this raw structure layout with no extra conversational markdown introduction prose:\\nStatus: [Normal OR Warning <parameter description detail text> OR Alert <parameter description detail text>]\\nRemark: [Your clear analytical observation detail matching the exact status chosen.]'\n        },\n        {\n            role: 'user',\n            content: `Evaluate this dataset:\\n\\nDYNAMIC PROFILE SAFE RANGE THRESHOLDS:\\n- Pulse Limits: ${cfg.minBPM} to ${cfg.maxBPM} BPM\\n- Oxygen Target: Above ${cfg.minSpO2}%\\n- Temperature Limits: ${cfg.minTemp} to ${cfg.maxTemp}°C\\n\\nTRAILING 10 HISTORICAL RECORD TIMELINE STREAM:\\n${historyString}\\n\\nLATEST INCOMING telemetry PACKET AT CURRENT HANDSHAKE:\\n- Pulse Rate: ${current.bpm} BPM\\n- Blood Oxygen (SpO2): ${current.spo2}%\\n- Body Temperature: ${current.bodyTemp}°C` \n        }\n    ]\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 200,
+        "y": 260,
+        "wires": [
+            [
+                "af37cebaceed4020"
+            ]
+        ]
+    },
+    {
+        "id": "af37cebaceed4020",
         "type": "http request",
-        "z": "b03e2598e891571e",
+        "z": "9199c418724cdcb2",
         "name": "Call Groq Cloud Engine",
         "method": "POST",
         "ret": "obj",
-        "paytoqs": "ignore",
         "url": "https://api.groq.com/openai/v1/chat/completions",
-        "tls": "",
-        "persist": false,
-        "proxy": "",
-        "insecureHTTPParser": false,
-        "authType": "",
-        "senderr": false,
-        "headers": [],
-        "x": 710,
-        "y": 400,
+        "x": 490,
+        "y": 260,
         "wires": [
             [
-                "bb455c08b433d7dd"
+                "a082fc567b64fb62"
             ]
         ]
     },
     {
-        "id": "bb455c08b433d7dd",
+        "id": "a082fc567b64fb62",
         "type": "function",
-        "z": "b03e2598e891571e",
-        "name": "Evaluate Dual Thresholds",
-        "func": "const aiAnalysisText = msg.payload?.choices?.[0]?.message?.content || 'Status: Warning\\nRemark: AI Analysis engine parsing failure.';\nconst lastReading = msg.vitalsContext;\nconst cfg = msg.configContext;\n\nlet alerts = [];\nif (lastReading.bpm < cfg.minBPM || lastReading.bpm > cfg.maxBPM) alerts.push(`Pulse Breach: ${lastReading.bpm} BPM`);\nif (lastReading.spo2 < cfg.minSpO2) alerts.push(`Hypoxia Breach: ${lastReading.spo2}%`);\nif (lastReading.bodyTemp < cfg.minTemp || lastReading.bodyTemp > cfg.maxTemp) alerts.push(`Temp Breach: ${lastReading.bodyTemp}°C`);\n\n// If AI generated a critical status or the math check flags a breach, trigger emergency alert routing\nif (alerts.length > 0 || aiAnalysisText.includes('Alert') || aiAnalysisText.includes('Warning')) {\n    msg.to = \"your-alert-inbox@gmail.com\";\n    msg.topic = \"⚠️ HEALTH ALERT SYSTÈM: \" + lastReading.deviceId;\n    msg.payload = `AI Clinical Assessment:\\n${aiAnalysisText}\\n\\nRaw Mathematical Breaches Found:\\n${alerts.length > 0 ? alerts.join('\\n') : 'None parsed by strict bounds.'}`;\n    return msg;\n}\n\nreturn null;",
+        "z": "9199c418724cdcb2",
+        "name": "Parse & Clean AI Fields",
+        "func": "const aiRawText = msg.payload?.choices?.[0]?.message?.content || 'Status: Warning\\nRemark: Engine failure.';\n\nlet status = 'Normal';\nlet remark = 'All parameters are normal and no signs of any alerts.';\n\nconst statusMatch = aiRawText.match(/Status:\\s*(.+)/i);\nconst remarkMatch = aiRawText.match(/Remark:\\s*([\\s\\S]+)/i);\n\nif (statusMatch) status = statusMatch[1].trim();\nif (remarkMatch) remark = remarkMatch[1].trim();\n\n// Create structured database collection tracking file format\nmsg.payload = {\n    deviceId: msg.vitalsContext.deviceId,\n    telemetryId: msg.vitalsContext._id,\n    status: status,\n    remark: remark,\n    timestamp: new Date().toISOString()\n};\n\nreturn msg;",
         "outputs": 1,
         "timeout": "",
         "noerr": 0,
         "initialize": "",
         "finalize": "",
         "libs": [],
-        "x": 1030,
-        "y": 400,
+        "x": 770,
+        "y": 260,
         "wires": [
             [
-                "24de512770312c41",
-                "33d10bc2675760b6"
+                "a67365bd816b7b35"
             ]
         ]
     },
     {
-        "id": "33d10bc2675760b6",
+        "id": "a67365bd816b7b35",
+        "type": "mongodb4",
+        "z": "9199c418724cdcb2",
+        "clientNode": "mongo_cluster_config",
+        "collection": "AI_response",
+        "operation": "insertOne",
+        "output": "toArray",
+        "maxTimeMS": "",
+        "handleDocId": false,
+        "name": "Atlas Save AI Response",
+        "x": 1050,
+        "y": 260,
+        "wires": [
+            [
+                "127ccbe146f4aeb6"
+            ]
+        ]
+    },
+    {
+        "id": "127ccbe146f4aeb6",
+        "type": "function",
+        "z": "9199c418724cdcb2",
+        "name": "Evaluate Dual Thresholds",
+        "func": "const aiDoc = msg.payload.document || msg.payload;\nconst status = aiDoc.status || 'Normal';\n\n// Condition check: Route email ONLY if status explicitly registers an Emergency 'Alert'\nif (status.toLowerCase().includes('alert')) {\n    msg.to = \"your-alert-inbox@gmail.com\";\n    msg.topic = \"⚠️ CRITICAL SYSTEM MEDICAL ALERT: \" + aiDoc.deviceId;\n    msg.payload = `AI Telemetry Classification System Report:\\n\\n[Current Evaluation Summary Status Flag]:\\n${status}\\n\\n[Clinical Diagnostics Review Analyst Remark]:\\n${aiDoc.remark}`;\n    return msg;\n}\n\nreturn null;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 410,
+        "y": 340,
+        "wires": [
+            [
+                "1e1852261d108c16",
+                "bc3f0e9e545e0e96"
+            ]
+        ]
+    },
+    {
+        "id": "bc3f0e9e545e0e96",
         "type": "e-mail",
-        "z": "b03e2598e891571e",
+        "z": "9199c418724cdcb2",
         "server": "smtp.gmail.com",
         "port": "465",
         "authtype": "BASIC",
@@ -188,12 +256,12 @@
         "tls": true,
         "name": "kulkarnikushal26@gmail.com",
         "dname": "E-Mail Alerts",
-        "x": 1270,
-        "y": 460,
+        "x": 670,
+        "y": 340,
         "wires": []
     },
     {
-        "id": "fe58054484051629",
+        "id": "mongo_cluster_config",
         "type": "mongodb4-client",
         "name": "AtlasCluster",
         "hostname": "",
